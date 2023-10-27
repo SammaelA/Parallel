@@ -103,6 +103,11 @@ inline double delta_h()
 
 int main(int argc, char **argv)
 {
+  float init_ms = 0;
+  float solve_ms = 0;
+  float compare_ms = 0;
+  bool compare = false;
+
   assert(argc == 5);
   N = std::stoi(std::string(argv[1]));
   Lx = std::stod(std::string(argv[2]));
@@ -123,27 +128,43 @@ int main(int argc, char **argv)
 
   Grid reference_grid;
   Grid ring[3];
+
+  auto t1 = std::chrono::steady_clock::now();
   fill_reference_grid(ring[0], 0*tau);
   fill_reference_grid(ring[1], 1*tau);
+  ring[2].clear_and_fill_borders(0);
+  auto t2 = std::chrono::steady_clock::now();
+  init_ms = 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+
   unsigned cur_grid = 2;
   for (unsigned step = 2; step<steps; step++)
   {
-    fill_reference_grid(reference_grid, step*tau);
-
     Grid &P1 = ring[(3 + cur_grid - 1) % 3];
     Grid &P2 = ring[(3 + cur_grid - 2) % 3];
 
-    ring[cur_grid].clear_and_fill_borders(0);
+    t1 = std::chrono::steady_clock::now();
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)
           ring[cur_grid].at(i,j,k) = 2*P1.at(i,j,k) - P2.at(i,j,k) + (tau*tau*a_squared()/(h*h)) * \
           (-6*P1.at(i,j,k) + P1.at(i-1,j,k) + P1.at(i+1,j,k) + P1.at(i,j-1,k) + P1.at(i,j+1,k) + P1.at(i,j,k-1) + P1.at(i,j,k+1));
+    t2 = std::chrono::steady_clock::now();
+    solve_ms += 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
 
-    double diff = max_diff(ring[cur_grid], reference_grid);
-    printf("%u: max diff %lg\n", step, diff);
+    if (compare)
+    {
+      t1 = std::chrono::steady_clock::now();
+      fill_reference_grid(reference_grid, step*tau);
+      double diff = max_diff(ring[cur_grid], reference_grid);
+      printf("%u: max diff %lg\n", step, diff);
+      t2 = std::chrono::steady_clock::now();
+      compare_ms += 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+    }
+
     cur_grid = (cur_grid + 1)%3;
   }
+
+  printf("took %.3f ms (%.3f + %.3f + %.3f)\n", init_ms + compare_ms + solve_ms, init_ms, solve_ms, compare_ms);
 
   return 0;
 }
