@@ -8,18 +8,19 @@
 //assume square grid NxNxN representing area [0,L]x[0,L]x[0,L]
 #define PI 3.1415926535897932384
 
-static int N = 0;
-static int Np = 0;
+static unsigned N = 0;
+static unsigned Np = 0;
+static unsigned Nb = 0;
 static double Lx = 0;
 static double Ly = 0;
 static double Lz = 0;
 static double h = 0;
 static double tau = 0;
 
-class Grid
+class SimpleGrid
 {
 public:
-  Grid()
+  SimpleGrid()
   {
     assert(((long)Np)*((long)Np)*((long)Np) < INT32_MAX);
     try
@@ -44,7 +45,7 @@ public:
   {
     return data;
   }
-  ~Grid()
+  ~SimpleGrid()
   {
     delete data;
   }
@@ -52,11 +53,52 @@ private:
   double *data = nullptr;
 };
 
+class BlockGrid
+{
+public:
+  static constexpr int BS = 4;
+  BlockGrid()
+  {
+    assert((Np/BS)*BS == Np);
+    assert(((long)Np)*((long)Np)*((long)Np) < INT32_MAX);
+    try
+    {
+      data = new double[Np*Np*Np];
+    }
+    catch (const std::exception& e)
+    {
+      fprintf(stderr, "Failed to allocate grid with size %d: %s\n",N, e.what());
+    }
+    
+  }
+  void clear_and_fill_borders(double val)
+  {
+    std::fill_n(data, Np*Np*Np, val);
+  }
+  inline double &at(unsigned i, unsigned j, unsigned k)
+  {
+    return data[((i/BS)*Nb*Nb + (j/BS)*Nb + k/BS)*(BS*BS*BS) + (i%BS)*BS*BS + (j%BS)*BS + k%BS];
+  }
+  const double *get_data() const
+  {
+    return data;
+  }
+  ~BlockGrid()
+  {
+    delete[] data;
+  }
+//private:
+  double *data = nullptr;
+};
+
+using Grid = SimpleGrid;
+
 double max_diff(Grid &g1, Grid &g2)
 {
   unsigned sz = Np*Np*Np;
   double max_diff = 0;
   std::vector<unsigned> max_pos;
+  #pragma omp parallel for
   for (unsigned i = 0;i<sz;i++)
     max_diff = std::max(max_diff, std::abs(g1.get_data()[i] - g2.get_data()[i]));
   /*
@@ -90,6 +132,7 @@ inline double a_squared()
 
 void fill_reference_grid(Grid &g, double t)
 {
+  #pragma omp parallel for
   for (unsigned i=0;i<=N;i++)
     for (unsigned j=0;j<=N;j++)
       for (unsigned k=0;k<=N;k++)
@@ -101,15 +144,19 @@ inline double delta_h()
 
 }
 
+//256 grid, 20 steps
+//simple grid, no openmp - 540-560 ms
+//simple grid, openmp - 440-450 ms
+
 int main(int argc, char **argv)
 {
   float init_ms = 0;
   float solve_ms = 0;
   float compare_ms = 0;
-  bool compare = false;
+  bool compare = true;
 
   assert(argc == 5);
-  N = std::stoi(std::string(argv[1]));
+  N = std::stoi(std::string(argv[1])) - 1;
   Lx = std::stod(std::string(argv[2]));
   Ly = std::stod(std::string(argv[3]));
   Lz = std::stod(std::string(argv[4]));
@@ -119,19 +166,38 @@ int main(int argc, char **argv)
 
   h = Lx/N;
   Np = N+1;
+  Nb = Np/BlockGrid::BS;
 
   //???
   //0.2*h*h*h to make it stable actually..
-  tau = 0.001;
+  tau = h/15;
 
-  constexpr unsigned steps = 20;
+  constexpr unsigned steps = 21;
 
   Grid reference_grid;
   Grid ring[3];
 
   auto t1 = std::chrono::steady_clock::now();
   fill_reference_grid(ring[0], 0*tau);
-  fill_reference_grid(ring[1], 1*tau);
+  //fill_reference_grid(ring[1], 1*tau);
+  {
+    Grid &P1 = ring[0];
+    double c = (tau*tau*a_squared()/(h*h));
+    #pragma omp parallel for
+    for (unsigned i=1;i<N;i++)
+      for (unsigned j=1;j<N;j++)
+        for (unsigned k=1;k<N;k++)
+          {
+            double p1 = P1.at(i,j,k);
+            double p3 = P1.at(i-1,j,k);
+            double p4 = P1.at(i+1,j,k);
+            double p5 = P1.at(i,j-1,k);
+            double p6 = P1.at(i,j+1,k);
+            double p7 = P1.at(i,j,k-1);
+            double p8 = P1.at(i,j,k+1);
+            ring[1].at(i,j,k) = p1 +0.5*tau*tau*(-6*p1 +p3+p4+p5+p6+p7+p8);
+          }
+  }
   ring[2].clear_and_fill_borders(0);
   auto t2 = std::chrono::steady_clock::now();
   init_ms = 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
@@ -141,13 +207,23 @@ int main(int argc, char **argv)
   {
     Grid &P1 = ring[(3 + cur_grid - 1) % 3];
     Grid &P2 = ring[(3 + cur_grid - 2) % 3];
-
+    double c = (tau*tau*a_squared()/(h*h));
     t1 = std::chrono::steady_clock::now();
+    #pragma omp parallel for
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)
-          ring[cur_grid].at(i,j,k) = 2*P1.at(i,j,k) - P2.at(i,j,k) + (tau*tau*a_squared()/(h*h)) * \
-          (-6*P1.at(i,j,k) + P1.at(i-1,j,k) + P1.at(i+1,j,k) + P1.at(i,j-1,k) + P1.at(i,j+1,k) + P1.at(i,j,k-1) + P1.at(i,j,k+1));
+          {
+            double p1 = P1.at(i,j,k);
+            double p2 = P2.at(i,j,k);
+            double p3 = P1.at(i-1,j,k);
+            double p4 = P1.at(i+1,j,k);
+            double p5 = P1.at(i,j-1,k);
+            double p6 = P1.at(i,j+1,k);
+            double p7 = P1.at(i,j,k-1);
+            double p8 = P1.at(i,j,k+1);
+            ring[cur_grid].at(i,j,k) = 2*p1 - p2 + c*(-6*p1 +p3+p4+p5+p6+p7+p8);
+          }
     t2 = std::chrono::steady_clock::now();
     solve_ms += 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
 
