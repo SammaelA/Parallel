@@ -1,8 +1,7 @@
-#include <chrono>
 #include <cstdio>
 #include <vector>
 #include <cmath>
-#include <string>
+#include <cstdlib>
 #include <cassert>
 
 //assume square grid NxNxN representing area [0,L]x[0,L]x[0,L]
@@ -21,7 +20,7 @@ class Grid
 public:
   Grid()
   {
-    assert(((long)Np)*((long)Np)*((long)Np) < INT32_MAX);
+    assert(((long)Np)*((long)Np)*((long)Np) < 1<<30);
     try
     {
       data = new double[Np*Np*Np];
@@ -49,7 +48,7 @@ public:
     delete data;
   }
 private:
-  double *data = nullptr;
+  double *data;
 };
 
 double max_diff(Grid &g1, Grid &g2)
@@ -80,11 +79,6 @@ void fill_reference_grid(Grid &g, double t)
         g.at(i,j,k) = u_analytical(i*h,j*h,k*h, t);
 }
 
-inline double delta_h()
-{
-
-}
-
 //256 grid, 20 steps
 //simple grid, no openmp - 540-560 ms
 //simple grid, openmp - 440-450 ms
@@ -97,10 +91,10 @@ int main(int argc, char **argv)
   bool compare = true;
 
   assert(argc == 5);
-  N = std::stoi(std::string(argv[1])) - 1;
-  Lx = std::stod(std::string(argv[2]));
-  Ly = std::stod(std::string(argv[3]));
-  Lz = std::stod(std::string(argv[4]));
+  N = atoi(argv[1]) - 1;
+  Lx = atoi(argv[2]);
+  Ly = atoi(argv[3]);
+  Lz = atoi(argv[4]);
 
   assert(Lx == Ly);
   assert(Lx == Lz);
@@ -112,12 +106,11 @@ int main(int argc, char **argv)
   //0.2*h*h*h to make it stable actually..
   tau = h/15;
 
-  constexpr unsigned steps = 21;
+  const unsigned steps = 21;
 
   Grid reference_grid;
   Grid ring[3];
 
-  auto t1 = std::chrono::steady_clock::now();
   fill_reference_grid(ring[0], 0*tau);
   //fill_reference_grid(ring[1], 1*tau);
   {
@@ -138,8 +131,6 @@ int main(int argc, char **argv)
           }
   }
   ring[2].clear_and_fill_borders(0);
-  auto t2 = std::chrono::steady_clock::now();
-  init_ms = 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
 
   unsigned cur_grid = 2;
   for (unsigned step = 2; step<steps; step++)
@@ -147,7 +138,6 @@ int main(int argc, char **argv)
     Grid &P1 = ring[(3 + cur_grid - 1) % 3];
     Grid &P2 = ring[(3 + cur_grid - 2) % 3];
     double c = (tau*tau*a_squared()/(h*h));
-    t1 = std::chrono::steady_clock::now();
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)
@@ -162,23 +152,17 @@ int main(int argc, char **argv)
             double p8 = P1.at(i,j,k+1);
             ring[cur_grid].at(i,j,k) = 2*p1 - p2 + c*(-6*p1 +p3+p4+p5+p6+p7+p8);
           }
-    t2 = std::chrono::steady_clock::now();
-    solve_ms += 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
-
     if (compare)
     {
-      t1 = std::chrono::steady_clock::now();
       fill_reference_grid(reference_grid, step*tau);
       double diff = max_diff(ring[cur_grid], reference_grid);
       printf("%u: max diff %lg\n", step, diff);
-      t2 = std::chrono::steady_clock::now();
-      compare_ms += 1e-3*std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
     }
 
     cur_grid = (cur_grid + 1)%3;
   }
 
-  printf("took %.3f ms (%.3f + %.3f + %.3f)\n", init_ms + compare_ms + solve_ms, init_ms, solve_ms, compare_ms);
+  //printf("took %.3f ms (%.3f + %.3f + %.3f)\n", init_ms + compare_ms + solve_ms, init_ms, solve_ms, compare_ms);
 
   return 0;
 }
