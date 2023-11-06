@@ -10,17 +10,16 @@
 
 static unsigned N = 0;
 static unsigned Np = 0;
-static unsigned Nb = 0;
 static double Lx = 0;
 static double Ly = 0;
 static double Lz = 0;
 static double h = 0;
 static double tau = 0;
 
-class SimpleGrid
+class Grid
 {
 public:
-  SimpleGrid()
+  Grid()
   {
     assert(((long)Np)*((long)Np)*((long)Np) < INT32_MAX);
     try
@@ -45,7 +44,7 @@ public:
   {
     return data;
   }
-  ~SimpleGrid()
+  ~Grid()
   {
     delete data;
   }
@@ -53,70 +52,13 @@ private:
   double *data = nullptr;
 };
 
-class BlockGrid
-{
-public:
-  static constexpr int BS = 4;
-  BlockGrid()
-  {
-    assert((Np/BS)*BS == Np);
-    assert(((long)Np)*((long)Np)*((long)Np) < INT32_MAX);
-    try
-    {
-      data = new double[Np*Np*Np];
-    }
-    catch (const std::exception& e)
-    {
-      fprintf(stderr, "Failed to allocate grid with size %d: %s\n",N, e.what());
-    }
-    
-  }
-  void clear_and_fill_borders(double val)
-  {
-    std::fill_n(data, Np*Np*Np, val);
-  }
-  inline double &at(unsigned i, unsigned j, unsigned k)
-  {
-    return data[((i/BS)*Nb*Nb + (j/BS)*Nb + k/BS)*(BS*BS*BS) + (i%BS)*BS*BS + (j%BS)*BS + k%BS];
-  }
-  const double *get_data() const
-  {
-    return data;
-  }
-  ~BlockGrid()
-  {
-    delete[] data;
-  }
-//private:
-  double *data = nullptr;
-};
-
-using Grid = SimpleGrid;
-
 double max_diff(Grid &g1, Grid &g2)
 {
   unsigned sz = Np*Np*Np;
   double max_diff = 0;
   std::vector<unsigned> max_pos;
-  #pragma omp parallel for
   for (unsigned i = 0;i<sz;i++)
     max_diff = std::max(max_diff, std::abs(g1.get_data()[i] - g2.get_data()[i]));
-  /*
-  max_diff = 0;
-  for (unsigned i=0;i<=N;i++)
-    for (unsigned j=0;j<=N;j++)
-      for (unsigned k=0;k<=N;k++)
-      {
-        double d = std::abs(g1.at(i,j,k) - g2.at(i,j,k));
-        if (d > max_diff)
-        {
-          max_diff = d;
-          max_pos = std::vector<unsigned>{i,j,k};
-        }
-      }
-  printf("%lg %u %u %u -- ", max_diff, max_pos[0], max_pos[1], max_pos[2]);
-  printf("%lg %lg\n",g1.at(max_pos[0], max_pos[1], max_pos[2]), g2.at(max_pos[0], max_pos[1], max_pos[2]));
-  */
   return max_diff;
 }
 
@@ -132,7 +74,6 @@ inline double a_squared()
 
 void fill_reference_grid(Grid &g, double t)
 {
-  #pragma omp parallel for
   for (unsigned i=0;i<=N;i++)
     for (unsigned j=0;j<=N;j++)
       for (unsigned k=0;k<=N;k++)
@@ -166,7 +107,6 @@ int main(int argc, char **argv)
 
   h = Lx/N;
   Np = N+1;
-  Nb = Np/BlockGrid::BS;
 
   //???
   //0.2*h*h*h to make it stable actually..
@@ -183,7 +123,6 @@ int main(int argc, char **argv)
   {
     Grid &P1 = ring[0];
     double c = (tau*tau*a_squared()/(h*h));
-    #pragma omp parallel for
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)
@@ -209,7 +148,6 @@ int main(int argc, char **argv)
     Grid &P2 = ring[(3 + cur_grid - 2) % 3];
     double c = (tau*tau*a_squared()/(h*h));
     t1 = std::chrono::steady_clock::now();
-    #pragma omp parallel for
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)

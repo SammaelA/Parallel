@@ -7,7 +7,7 @@
 
 //assume square grid NxNxN representing area [0,L]x[0,L]x[0,L]
 #define PI 3.1415926535897932384
-#define BS 4
+#define BS 32
 
 static int N = 0;
 static int Np = 0;
