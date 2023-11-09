@@ -7,13 +7,13 @@
 #include <omp.h>
 #include <array>
 
-#define THREADS_NB omp_get_max_threads()
+#define THREADS_NB 8
 
 //assume square grid NxNxN representing area [0,L]x[0,L]x[0,L]
 #define PI 3.1415926535897932384
 
-static unsigned N = 0;
-static unsigned Np = 0;
+static int N = 0;
+static int Np = 0;
 static double Lx = 0;
 static double Ly = 0;
 static double Lz = 0;
@@ -27,15 +27,15 @@ public:
   {
 
   }
-  void init( unsigned _x0, unsigned _y0, unsigned _z0, unsigned _xn, unsigned _yn, unsigned _zn)
+  void init( int _x0, int _y0, int _z0, int _xn, int _yn, int _zn)
   {
     x0 = _x0;
     y0 = _y0;
     z0 = _z0;
-    xn = _zn;
+    xn = _xn;
     yn = _yn;
     zn = _zn;
-    printf("[%u %u %u] - %u %u %u\n",x0,y0,z0,xn,yn,zn);
+    printf("[%d %d %d] - %d %d %d\n",x0,y0,z0,xn,yn,zn);
 
     try
     {
@@ -51,7 +51,7 @@ public:
   {
     std::fill_n(data, xn*yn*zn, val);
   }
-  inline double &at(unsigned i, unsigned j, unsigned k)
+  inline double &at(int i, int j, int k)
   {
     return data[i*yn*zn + j*zn + k];
   }
@@ -65,17 +65,34 @@ public:
   }
 
   double *data;
-  unsigned x0,y0,z0;
-  unsigned xn,yn,zn;
+  int x0,y0,z0;
+  int xn,yn,zn;
 };
 
 double max_diff(Grid &g1, Grid &g2)
 {
-  unsigned sz = Np*Np*Np;
+  int sz = g1.xn*g1.yn*g1.zn;
+  assert(sz == g2.xn*g2.yn*g2.zn);
   double max_diff = 0;
-  std::vector<unsigned> max_pos;
-  for (unsigned i = 0;i<sz;i++)
+  std::vector<int> max_pos;
+  for (int i = 0;i<sz;i++)
     max_diff = std::max(max_diff, std::abs(g1.get_data()[i] - g2.get_data()[i]));
+
+  max_diff = 0;
+  for (int i=0;i<g1.xn;i++)
+    for (int j=0;j<g1.yn;j++)
+      for (int k=0;k<g1.zn;k++)
+      {
+        double d = std::abs(g1.at(i,j,k) - g2.at(i,j,k));
+        if (d > max_diff)
+        {
+          max_diff = d;
+          max_pos = std::vector<int>{i,j,k};
+        }
+      }
+  printf("%lg %lg %lg %lg -- ", max_diff, max_pos[0]*h, max_pos[1]*h, max_pos[2]*h);
+  printf("%lg %lg\n",g1.at(max_pos[0], max_pos[1], max_pos[2]), g2.at(max_pos[0], max_pos[1], max_pos[2]));
+  
   return max_diff;
 }
 
@@ -92,9 +109,9 @@ inline double a_squared()
 void fill_reference_grid(Grid &g, double t)
 {
   #pragma omp parallel for num_threads(THREADS_NB)
-  for (unsigned i=0;i<g.xn;i++)
-    for (unsigned j=0;j<g.yn;j++)
-      for (unsigned k=0;k<g.zn;k++)
+  for (int i=0;i<g.xn;i++)
+    for (int j=0;j<g.yn;j++)
+      for (int k=0;k<g.zn;k++)
         g.at(i,j,k) = u_analytical((i+g.x0)*h,(j+g.y0)*h,(k+g.z0)*h, t);
 }
 
@@ -162,37 +179,37 @@ int main(int argc, char **argv)
   //0.2*h*h*h to make it stable actually..
   tau = h/15;
 
-  const unsigned steps = 21;
+  const int steps = 21;
 
   std::vector<std::array<Grid, 3>> ring_buffers;
   int blocks = THREADS_NB;
-  int blocks_x, blocks_y, blocks_z;
+  int blocks_x=4, blocks_y=4, blocks_z=4;
   get_best_blocks_layout(blocks, &blocks_x, &blocks_y, &blocks_z);
   ring_buffers.resize(blocks);
-  for (unsigned i=0;i<blocks_x;i++)
+  for (int i=0;i<blocks_x;i++)
   {
-    for (unsigned j=0;j<blocks_y;j++)
+    for (int j=0;j<blocks_y;j++)
     {
-      for (unsigned k=0;k<blocks_z;k++)
+      for (int k=0;k<blocks_z;k++)
       {
         for (int bn = 0; bn < 3; bn++)
         {
-          ring_buffers[i*blocks_y*blocks_z + j*blocks_z + k][bn].init(i*(Np/blocks_x) - 1, j*(Np/blocks_y) - 1, k*(Np/blocks_z) - 1,
-                                                                      Np/blocks_x+2, Np/blocks_y+2, Np/blocks_z+2);
+          int bst_x = std::min(std::max(0, i*(Np/blocks_x) - 1), Np);
+          int bst_y = std::min(std::max(0, j*(Np/blocks_y) - 1), Np);
+          int bst_z = std::min(std::max(0, k*(Np/blocks_z) - 1), Np);
+          int ben_x = std::min(std::max(0, (i+1)*(Np/blocks_x) + 1), Np);
+          int ben_y = std::min(std::max(0, (j+1)*(Np/blocks_y) + 1), Np);
+          int ben_z = std::min(std::max(0, (k+1)*(Np/blocks_z) + 1), Np);
+          printf("%d %d %d %d %d %d\n",bst_x, bst_y, bst_z, ben_x, ben_y, ben_z );
+          ring_buffers[i*blocks_y*blocks_z + j*blocks_z + k][bn].init(
+            bst_x, bst_y, bst_z, ben_x - bst_x, ben_y - bst_y, ben_z - bst_z);
         }
       }      
     }
   }
-  #pragma omp parallel for num_threads(THREADS_NB)
-  for (unsigned i=0;i<blocks;i++)
-  {
-    fill_reference_grid(ring_buffers[i][0], 0*tau);
-    fill_reference_grid(ring_buffers[i][1], 1*tau);
-  }
-
   clock_t t1 = clock();
   #pragma omp parallel for num_threads(THREADS_NB)
-  for (unsigned i=0;i<blocks;i++)
+  for (int i=0;i<blocks;i++)
   {
     fill_reference_grid(ring_buffers[i][0], 0*tau);
     fill_reference_grid(ring_buffers[i][1], 1*tau);
@@ -203,9 +220,9 @@ int main(int argc, char **argv)
     Grid &P1 = ring[0];
     double c = (tau*tau*a_squared()/(h*h));
     #pragma omp parallel for num_threads(THREADS_NB)
-    for (unsigned i=1;i<N;i++)
-      for (unsigned j=1;j<N;j++)
-        for (unsigned k=1;k<N;k++)
+    for (int i=1;i<N;i++)
+      for (int j=1;j<N;j++)
+        for (int k=1;k<N;k++)
           {
             double p1 = P1.at(i,j,k);
             double p3 = P1.at(i-1,j,k);
@@ -222,21 +239,21 @@ int main(int argc, char **argv)
   clock_t t2 = clock();
   init_ms = 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
 
-  unsigned cur_grid = 2;
-  for (unsigned step = 2; step<steps; step++)
+  int cur_grid = 2;
+  for (int step = 2; step<3; step++)
   {
     t1 = clock();
     #pragma omp parallel for num_threads(THREADS_NB)
-    for (unsigned block_n=0;block_n<blocks;block_n++)
+    for (int block_n=0;block_n<blocks;block_n++)
     {
       Grid &P1 = ring_buffers[block_n][(3 + cur_grid - 1) % 3];
       Grid &P2 = ring_buffers[block_n][(3 + cur_grid - 2) % 3];
       Grid &P_res = ring_buffers[block_n][cur_grid];
       double c = (tau * tau * a_squared() / (h * h));
 
-      for (unsigned i = 1; i < P_res.xn - 1; i++)
-        for (unsigned j = 1; j < P_res.yn - 1; j++)
-          for (unsigned k = 1; k < P_res.zn - 1; k++)
+      for (int i = 1; i < P_res.xn - 1; i++)
+        for (int j = 1; j < P_res.yn - 1; j++)
+          for (int k = 1; k < P_res.zn - 1; k++)
           {
             double p1 = P1.at(i, j, k);
             double p2 = P2.at(i, j, k);
@@ -247,19 +264,80 @@ int main(int argc, char **argv)
             double p7 = P1.at(i, j, k - 1);
             double p8 = P1.at(i, j, k + 1);
             P_res.at(i, j, k) = 2 * p1 - p2 + c * (-6 * p1 + p3 + p4 + p5 + p6 + p7 + p8);
+            printf("[%d]%d %d %d %lg %lg %lg %lg\n",block_n,i,j,k, P_res.at(i, j, k), p1, p2, p3);
           }
     }
     t2 = clock();
     solve_ms += 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
     
     //transfer
-    for (unsigned i=0;i<blocks_x;i++)
+    for (int i=0;i<blocks_x;i++)
     {
-      for (unsigned j=0;j<blocks_y;j++)
+      for (int j=0;j<blocks_y;j++)
       {
-        for (unsigned k=0;k<blocks_z;k++)
+        for (int k=0;k<blocks_z;k++)
         {
-          Grid &P = ring_buffers[i*blocks_y*blocks_z + j*blocks_z + k][cur_grid];
+          Grid &S = ring_buffers[i*blocks_y*blocks_z + j*blocks_z + k][cur_grid];
+          if (i != 0)
+          {
+            Grid &R = ring_buffers[(i-1)*blocks_y*blocks_z + j*blocks_z + k][cur_grid];
+            printf("(%d %d %d) %d %d   %d %d   %d %d\n", i,j,k, S.xn, R.xn, S.yn, R.yn, S.zn, R.zn);
+            
+            assert(S.yn == R.yn && S.zn == R.zn);
+            for (int y = 0; y < S.yn; y++)
+              for (int z = 0; z < S.zn; z++)
+                R.data[(R.xn-1)*S.yn*S.zn + y*S.zn + z] = S.data[(1)*S.yn*S.zn + y*S.zn + z];
+          }
+          if (i != blocks_x - 1)
+          {
+            Grid &R = ring_buffers[(i+1)*blocks_y*blocks_z + j*blocks_z + k][cur_grid];
+            printf("(%d %d %d) %d %d   %d %d   %d %d\n", i,j,k, S.xn, R.xn, S.yn, R.yn, S.zn, R.zn);
+            
+            assert(S.yn == R.yn && S.zn == R.zn);
+            for (int y = 0; y < S.yn; y++)
+              for (int z = 0; z < S.zn; z++)
+                R.data[(0)*S.yn*S.zn + y*S.zn + z] = S.data[(S.xn - 2)*S.yn*S.zn + y*S.zn + z];          
+          }
+
+          if (j != 0)
+          {
+            Grid &R = ring_buffers[i*blocks_y*blocks_z + (j-1)*blocks_z + k][cur_grid];
+            printf("(%d %d %d) %d %d   %d %d   %d %d\n", i,j,k, S.xn, R.xn, S.yn, R.yn, S.zn, R.zn);
+            
+            assert(S.xn == R.xn && S.zn == R.zn);
+            for (int x = 0; x < S.xn; x++)
+              for (int z = 0; z < S.zn; z++)
+                R.data[x*S.yn*S.zn + (R.yn-1)*S.zn + z] = S.data[x*S.yn*S.zn + (1)*S.zn + z];
+          }
+          if (j != blocks_y - 1)
+          {
+            Grid &R = ring_buffers[i*blocks_y*blocks_z + (j+1)*blocks_z + k][cur_grid];
+            printf("(%d %d %d) %d %d   %d %d   %d %d\n", i,j,k, S.xn, R.xn, S.yn, R.yn, S.zn, R.zn);
+            
+            assert(S.xn == R.xn && S.zn == R.zn);
+            for (int x = 0; x < S.xn; x++)
+              for (int z = 0; z < S.zn; z++)
+                R.data[x*S.yn*S.zn + (0)*S.zn + z] = S.data[x*S.yn*S.zn + (S.yn-2)*S.zn + z];          
+          }
+
+          if (k != 0)
+          {
+            Grid &R = ring_buffers[i*blocks_y*blocks_z + j*blocks_z + k-1][cur_grid];
+            printf("(%d %d %d) %d %d   %d %d   %d %d\n", i,j,k, S.xn, R.xn, S.yn, R.yn, S.zn, R.zn);
+            assert(S.xn == R.xn && S.yn == R.yn);
+            for (int x = 0; x < S.xn; x++)
+              for (int y = 0; y < S.yn; y++)
+                R.data[x*S.yn*S.zn + y*S.zn + (R.zn-1)] = S.data[x*S.yn*S.zn + y*S.zn + (1)];
+          }
+          if (k != blocks_z - 1)
+          {
+            Grid &R = ring_buffers[i*blocks_y*blocks_z + j*blocks_z + k+1][cur_grid];
+            printf("(%d %d %d) %d %d   %d %d   %d %d\n", i,j,k, S.xn, R.xn, S.yn, R.yn, S.zn, R.zn);
+            assert(S.xn == R.xn && S.yn == R.yn);
+            for (int x = 0; x < S.xn; x++)
+              for (int y = 0; y < S.yn; y++)
+                R.data[x*S.yn*S.zn + y*S.zn + (0)] = S.data[x*S.yn*S.zn + y*S.zn + (S.zn-2)];          
+          }
         }      
       }
     }
@@ -268,13 +346,13 @@ int main(int argc, char **argv)
     {
       double diff = 0;
       t1 = clock();
-      #pragma omp parallel for num_threads(THREADS_NB)
-      for (unsigned block_n=0;block_n<blocks;block_n++)
+      ///#pragma omp parallel for num_threads(THREADS_NB)
+      for (int block_n=0;block_n<blocks;block_n++)
       {
       fill_reference_grid(ring_buffers[block_n][(cur_grid + 1)%3], step*tau);
       diff = std::max(diff, max_diff(ring_buffers[block_n][cur_grid], ring_buffers[block_n][(cur_grid + 1)%3]));
       }
-      printf("%u: max diff %lg\n", step, diff);
+      printf("%d: max diff %lg\n", step, diff);
       t2 = clock();
       compare_ms += 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
     }
