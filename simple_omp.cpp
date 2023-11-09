@@ -3,6 +3,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <cassert>
+#include <ctime>
+#include <omp.h>
+
+#define THREADS_NB omp_get_max_threads()
 
 //assume square grid NxNxN representing area [0,L]x[0,L]x[0,L]
 #define PI 3.1415926535897932384
@@ -73,7 +77,7 @@ inline double a_squared()
 
 void fill_reference_grid(Grid &g, double t)
 {
-  #pragma omp parallel for
+  #pragma omp parallel for num_threads(THREADS_NB)
   for (unsigned i=0;i<=N;i++)
     for (unsigned j=0;j<=N;j++)
       for (unsigned k=0;k<=N;k++)
@@ -112,12 +116,13 @@ int main(int argc, char **argv)
   Grid reference_grid;
   Grid ring[3];
 
+  clock_t t1 = clock();
   fill_reference_grid(ring[0], 0*tau);
   //fill_reference_grid(ring[1], 1*tau);
   {
     Grid &P1 = ring[0];
     double c = (tau*tau*a_squared()/(h*h));
-    #pragma omp parallel for
+    #pragma omp parallel for num_threads(THREADS_NB)
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)
@@ -133,14 +138,17 @@ int main(int argc, char **argv)
           }
   }
   ring[2].clear_and_fill_borders(0);
+  clock_t t2 = clock();
+  init_ms = 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
 
   unsigned cur_grid = 2;
   for (unsigned step = 2; step<steps; step++)
   {
+    t1 = clock();
     Grid &P1 = ring[(3 + cur_grid - 1) % 3];
     Grid &P2 = ring[(3 + cur_grid - 2) % 3];
     double c = (tau*tau*a_squared()/(h*h));
-    #pragma omp parallel for
+    #pragma omp parallel for num_threads(THREADS_NB)
     for (unsigned i=1;i<N;i++)
       for (unsigned j=1;j<N;j++)
         for (unsigned k=1;k<N;k++)
@@ -155,17 +163,23 @@ int main(int argc, char **argv)
             double p8 = P1.at(i,j,k+1);
             ring[cur_grid].at(i,j,k) = 2*p1 - p2 + c*(-6*p1 +p3+p4+p5+p6+p7+p8);
           }
+    
+    t2 = clock();
+    solve_ms += 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
     if (compare)
     {
+      t1 = clock();
       fill_reference_grid(reference_grid, step*tau);
       double diff = max_diff(ring[cur_grid], reference_grid);
       printf("%u: max diff %lg\n", step, diff);
+      t2 = clock();
+      compare_ms += 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
     }
 
     cur_grid = (cur_grid + 1)%3;
   }
 
-  //printf("took %.3f ms (%.3f + %.3f + %.3f)\n", init_ms + compare_ms + solve_ms, init_ms, solve_ms, compare_ms);
+  printf("took %.3f ms (%.3f + %.3f + %.3f)\n", init_ms + compare_ms + solve_ms, init_ms, solve_ms, compare_ms);
 
   return 0;
 }
