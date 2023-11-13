@@ -261,7 +261,7 @@ int main(int argc, char **argv)
 
   //???
   //0.2*h*h*h to make it stable actually..
-  tau = h/15;
+  tau = 1.0/(128*15);
 
   const int steps = 21;
 
