@@ -1,2 +1,8 @@
 .vscode
 a.out
+*.png
+*.mp4
+*.ipynb
+*.py
+*.txt
+*.gif
