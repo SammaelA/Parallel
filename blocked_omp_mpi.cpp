@@ -6,7 +6,7 @@
 #include <ctime>
 #include <omp.h>
 #include <array>
-#include <mpi/mpi.h>
+#include <mpi.h>
 
 #define THREADS_NB omp_get_max_threads()
 
@@ -36,7 +36,6 @@ public:
     xn = _xn;
     yn = _yn;
     zn = _zn;
-    printf("[%d %d %d] - %d %d %d\n",x0,y0,z0,xn,yn,zn);
 
     try
     {
@@ -81,30 +80,6 @@ double max_diff(Grid &g1, Grid &g2)
           max_pos = std::vector<int>{i,j,k};
         }
       }
-  //printf("%lg %lg %lg %lg -- ", max_diff, max_pos[0]*h, max_pos[1]*h, max_pos[2]*h);
-  //printf("%lg %lg\n",g1.at(max_pos[0], max_pos[1], max_pos[2]), g2.at(max_pos[0], max_pos[1], max_pos[2]));
-    /*
-  for (int i=0;i<g1.xn;i++)
-  {
-    printf("\nslice %d\n",i);
-    printf("\nRES (%d %d %d)\n", g1.x0, g1.y0, g1.z0);
-    for (int j=0;j<g1.yn;j++)
-    {
-      for (int k=0;k<g1.zn;k++)
-        printf("%6.5f ", (float)g1.at(i,j,k));
-      printf("\n");
-    }
-    printf("\n");
-    printf("\nREF\n");
-    for (int j=0;j<g1.yn;j++)
-    {
-      for (int k=0;k<g1.zn;k++)
-        printf("%6.5f ", (float)g2.at(i,j,k));
-      printf("\n");
-    }
-    printf("\n");
-  }
-  */
   return max_diff;
 }
 
@@ -328,19 +303,14 @@ void transfer(int i, int j, int k, int blocks_x, int blocks_y, int blocks_z, int
   MPI_Status status;
   while (!all_finished)
   {
-    //for (int rn=0;rn<RO;rn++)
-    //  printf("%d send_finished[%d] = %d\n", GET_BN(i,j,k),rn, send_finished[rn]);
     all_finished = true;
     for (int rn=0;rn<RO;rn++)
     {
       if (!send_finished[rn])
       {
-        //printf("%d %d %d / %d %d %d test %d\n",i,j,k,blocks_x, blocks_y, blocks_z, rn);
         MPI_Test(&send_requests[rn], &flag, &status);
         send_finished[rn] = flag;
         all_finished = all_finished && flag;
-        //if (flag)
-        //  printf("%d %d %d / %d %d %d test %d\n",i,j,k,blocks_x, blocks_y, blocks_z, rn);
       }
     }
 
@@ -348,15 +318,11 @@ void transfer(int i, int j, int k, int blocks_x, int blocks_y, int blocks_z, int
     {
       if (!recieve_finished[rn])
       {
-        //printf("%d %d %d / %d %d %d test recv %d\n",i,j,k,blocks_x, blocks_y, blocks_z, rn);
         MPI_Test(&recieve_requests[rn], &flag, &status);
         recieve_finished[rn] = flag;
         all_finished = all_finished && flag;
         if (flag)
-        {
-          //printf("%d %d %d / %d %d %d test recv %d\n",i,j,k,blocks_x, blocks_y, blocks_z, rn);
           recieve_from_buffer(S, tmp_buffers[RO+rn], rn);
-        }
       }
     }
   }
@@ -368,7 +334,7 @@ int main(int argc, char **argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &blocks);
 	MPI_Comm_rank(MPI_COMM_WORLD, &block_n);
-  printf("Process: %d, size: %d\n", block_n, blocks);
+  double start = MPI_Wtime();
 
   float init_ms = 0;
   float solve_ms = 0;
@@ -477,7 +443,6 @@ int main(int argc, char **argv)
             double p7 = P1.at(i, j, k - 1);
             double p8 = P1.at(i, j, k + 1);
             P_res.at(i, j, k) = 2 * p1 - p2 + c * (-6 * p1 + p3 + p4 + p5 + p6 + p7 + p8);
-            //printf("[%d]%d %d %d %lg %lg %lg %lg\n",block_n,i,j,k, P_res.at(i, j, k), p1, p2, p3);
           }
     }
     t2 = clock();
@@ -494,7 +459,6 @@ int main(int argc, char **argv)
       t1 = clock();
       fill_reference_grid(ring_buffer[(cur_grid + 1)%3], step*tau);
       block_max_diff = std::max(block_max_diff, max_diff(ring_buffer[cur_grid], ring_buffer[(cur_grid + 1)%3]));
-      printf("%d: max diff %lg\n", step, block_max_diff);
       t2 = clock();
       compare_ms += 1000*(double)(t2 - t1) / (CLOCKS_PER_SEC * THREADS_NB);
     }
@@ -502,11 +466,11 @@ int main(int argc, char **argv)
     cur_grid = (cur_grid + 1)%3;
   }
 
-  double block_time = init_ms + compare_ms + solve_ms;
+  double block_time = 1000*(MPI_Wtime() - start);
   double total_time = 0;
   double total_max_diff = 0;
   MPI_Reduce(&block_max_diff, &total_max_diff, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-  MPI_Reduce(&block_time, &total_time, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&block_time, &total_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
   if (block_n == 0)
   {
     printf("max diff %lg\n", total_max_diff);
