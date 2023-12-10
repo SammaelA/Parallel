@@ -300,32 +300,23 @@ void transfer(int i, int j, int k, int blocks_x, int blocks_y, int blocks_z, int
   //wait to actually recieve all required data
   bool all_finished = false;
   int flag;
-  MPI_Status status;
-  while (!all_finished)
-  {
-    all_finished = true;
-    for (int rn=0;rn<RO;rn++)
-    {
-      if (!send_finished[rn])
-      {
-        MPI_Test(&send_requests[rn], &flag, &status);
-        send_finished[rn] = flag;
-        all_finished = all_finished && flag;
-      }
-    }
+  MPI_Status statuses[2*RO];
+  MPI_Request active_send_requests[RO]; int sr_count = 0;
+  MPI_Request active_recieve_requests[RO]; int rr_count = 0;
 
-    for (int rn=0;rn<RO;rn++)
-    {
-      if (!recieve_finished[rn])
-      {
-        MPI_Test(&recieve_requests[rn], &flag, &status);
-        recieve_finished[rn] = flag;
-        all_finished = all_finished && flag;
-        if (flag)
-          recieve_from_buffer(S, tmp_buffers[RO+rn], rn);
-      }
-    }
+  for (int rn=0;rn<RO;rn++)
+  {
+    if (!send_finished[rn])
+      active_send_requests[sr_count++] = send_requests[rn];
+    if (!recieve_finished[rn])
+      active_recieve_requests[rr_count++] = recieve_requests[rn];
   }
+
+  MPI_Waitall(rr_count, active_recieve_requests, statuses);
+  for (int rn=0;rn<RO;rn++)
+    if (!recieve_finished[rn])
+      recieve_from_buffer(S, tmp_buffers[RO+rn], rn);
+  MPI_Waitall(sr_count, active_send_requests, statuses+RO);
 }
 
 int main(int argc, char **argv)
@@ -334,6 +325,10 @@ int main(int argc, char **argv)
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &blocks);
 	MPI_Comm_rank(MPI_COMM_WORLD, &block_n);
+  char host_name[MPI_MAX_PROCESSOR_NAME];
+  int host_name_size=0;
+  MPI_Get_processor_name(host_name, &host_name_size);
+  printf("host name %s\n",host_name);
   double start = MPI_Wtime();
 
   float init_ms = 0;
